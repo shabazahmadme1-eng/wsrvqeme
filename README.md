@@ -8,7 +8,7 @@ Scope follows the brief: national wind only, Elexon BMRS data only, purchase dec
 |---|---|---|
 | ![Buying forecast](docs/buying.png) | ![Forecast accuracy](docs/accuracy.png) | ![Live now](docs/live.png) |
 
-**Live app:** _added after deployment_
+**Live app:** https://wsrvqeme.vercel.app (API docs at https://wsrvqeme.vercel.app/docs)
 
 ## AI assistance disclosure
 
