@@ -3,7 +3,8 @@ import { Area, CartesianGrid, ComposedChart, Line, ResponsiveContainer, Tooltip,
 import { api, ApiError, type DecisionResponse, type Meta } from './api'
 import { addDays, clock, count, dayLabel, gw, minutesToClock, mw, signedMw } from './format'
 import { PublicationLadder } from './PublicationLadder'
-import { COLORS, Legend, Notice, Panel, Skeleton, Stat, axisFor, gwTick, makeTooltip } from './ui'
+import { axisFor, COLORS, gwTick, makeTooltip } from './chart'
+import { Legend, Notice, Panel, Skeleton, Stat } from './ui'
 import { useDebounced, useRemote } from './useApi'
 
 interface Props {

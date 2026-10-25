@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react'
 import { Area, CartesianGrid, ComposedChart, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { api, type LiveResponse } from './api'
 import { clock, clockMs, compass, dayLabel, gw, mw, signedMw } from './format'
-import { COLORS, Legend, Notice, Panel, Skeleton, Stat, axisFor, gwTick, makeTooltip } from './ui'
+import { axisFor, COLORS, gwTick, makeTooltip } from './chart'
+import { Legend, Notice, Panel, Skeleton, Stat } from './ui'
 import { useRemote } from './useApi'
 
 const REFRESH_MS = 5 * 60 * 1000

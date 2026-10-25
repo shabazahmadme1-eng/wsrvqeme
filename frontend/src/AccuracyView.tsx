@@ -1,7 +1,8 @@
 import { Bar, BarChart, CartesianGrid, Cell, ComposedChart, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { api, ApiError, type AccuracyResponse, type GroupMetrics, type HorizonResponse } from './api'
 import { clockToMinutes, count, dayLabel, gw, minutesToClock, mw, pct, signedMw, signedPct } from './format'
-import { COLORS, Legend, Notice, Panel, Skeleton, Stat, axisFor, gwTick, makeTooltip } from './ui'
+import { axisFor, COLORS, gwTick, makeTooltip } from './chart'
+import { Legend, Notice, Panel, Skeleton, Stat } from './ui'
 import { useDebounced, useRemote } from './useApi'
 
 interface Props {

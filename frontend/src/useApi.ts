@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { ApiError } from './api'
 
 export interface Remote<T> {
@@ -10,24 +10,34 @@ export interface Remote<T> {
 /**
  * Runs `load` whenever `deps` change and cancels the previous request.
  * The previous result is kept while the next one loads, so charts don't flash empty while a control is dragged.
+ *
+ * `deps` is serialised into a key and the effect depends on that key alone. Callers pass `load` as an inline
+ * closure, which is a new function on every render and so cannot itself be a dependency; the latest one is read
+ * from a ref instead.
  */
 export function useRemote<T>(load: (signal: AbortSignal) => Promise<T>, deps: unknown[]): Remote<T> {
-  const [state, setState] = useState<Remote<T>>({ data: null, error: null, loading: true })
+  // `settled.key` records which request the stored result belongs to, so `loading` is derived
+  // (the current key has not settled yet) rather than set synchronously inside the effect.
+  const [settled, setSettled] = useState<{ key: string; data: T | null; error: Error | null }>({ key: '', data: null, error: null })
+  const loadRef = useRef(load)
+  useEffect(() => {
+    loadRef.current = load
+  })
+  const key = JSON.stringify(deps)
 
   useEffect(() => {
     const controller = new AbortController()
-    setState((s) => ({ ...s, loading: true }))
-    load(controller.signal)
-      .then((data) => setState({ data, error: null, loading: false }))
+    loadRef
+      .current(controller.signal)
+      .then((data) => setSettled({ key, data, error: null }))
       .catch((error: Error) => {
         if (error.name === 'AbortError') return
-        setState((s) => ({ data: error instanceof ApiError && error.status === 404 ? null : s.data, error, loading: false }))
+        setSettled((s) => ({ key, data: error instanceof ApiError && error.status === 404 ? null : s.data, error }))
       })
     return () => controller.abort()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, deps)
+  }, [key])
 
-  return state
+  return { data: settled.data, error: settled.error, loading: settled.key !== key }
 }
 
 /** Returns `value` only after it has stopped changing for `ms`. Used to avoid one request per slider tick. */

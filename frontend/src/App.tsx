@@ -34,17 +34,15 @@ export default function App() {
   const [tab, setTab] = useState<TabId>(tabFromHash)
   const meta = useRemote((s) => api.meta(s), [])
   // Shared by both views so the cutoff chosen on one page carries over to the other.
-  const [cutoff, setCutoff] = useState<number | null>(null)
+  // Until the user moves it, it is the server's default, derived rather than copied into state.
+  const [chosenCutoff, setCutoff] = useState<number | null>(null)
+  const cutoff = chosenCutoff ?? (meta.data ? clockToMinutes(meta.data.default_cutoff) : null)
 
   useEffect(() => {
     const onHash = () => setTab(tabFromHash())
     window.addEventListener('hashchange', onHash)
     return () => window.removeEventListener('hashchange', onHash)
   }, [])
-
-  useEffect(() => {
-    if (meta.data && cutoff === null) setCutoff(clockToMinutes(meta.data.default_cutoff))
-  }, [meta.data, cutoff])
 
   return (
     <div className="shell">

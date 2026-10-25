@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { addDays, clockMs, clockToMinutes, compass, dayLabel, duration, gw, minutesToClock, signedMw } from './format'
-import { axisFor, gwTick } from './ui'
+import { axisFor, gwTick } from './chart'
 
 describe('format', () => {
   it('formats signed megawatts with a true minus sign', () => {
