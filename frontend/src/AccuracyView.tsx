@@ -70,7 +70,7 @@ function Headline({ a }: { a: AccuracyResponse }) {
   const total = a.error_histogram.reduce((s, b) => s + b.count, 0)
   const tooHigh = a.error_histogram.filter((b) => b.from_mw >= 0).reduce((s, b) => s + b.count, 0)
   return (
-    <div>
+    <div className="briefing-block">
       <p className="briefing">
         Across every January decision, the forecast available at <strong>{a.cutoff_utc}</strong> missed by <strong>{mw(o.mae_mw)}</strong> an hour on average, which is{' '}
         <strong>{o.mae_pct === null ? '–' : pct(o.mae_pct, 0)}</strong> of the wind actually generated.
@@ -86,7 +86,7 @@ function Headline({ a }: { a: AccuracyResponse }) {
 function Stats({ a }: { a: AccuracyResponse }) {
   const o = a.overall
   return (
-    <dl className="grid stats" style={{ margin: 0 }}>
+    <dl className="grid stats six">
       <Stat label="Average miss (MAE)" value={mw(o.mae_mw)} hint={o.mae_pct === null ? undefined : `${pct(o.mae_pct)} of average output`} />
       <Stat label="Bias" value={signedMw(o.bias_mw)} hint={o.bias_mw >= 0 ? 'forecast above actual' : 'forecast below actual'} warn />
       <Stat label="Big misses (P90)" value={mw(o.p90_abs_error_mw)} hint="1 hour in 10 was off by more" />

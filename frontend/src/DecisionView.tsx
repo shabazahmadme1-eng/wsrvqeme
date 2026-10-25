@@ -164,7 +164,7 @@ function Briefing({ d }: { d: DecisionResponse }) {
   const latest = d.points.reduce((a, p) => (p.published > a ? p.published : a), d.points[0].published)
   const band = d.band
   return (
-    <div>
+    <div className="briefing-block">
       <p className="briefing">
         For <b>{dayLabel(d.delivery_date)}</b>, the forecast released at <strong>{clock(latest)}</strong> on {dayLabel(latest)} expects wind to average{' '}
         <strong>{gw(d.summary.mean_mw)}</strong>, peaking at <strong>{gw(d.summary.peak_mw)}</strong> around {clock(d.summary.peak_hour)} and dipping to{' '}

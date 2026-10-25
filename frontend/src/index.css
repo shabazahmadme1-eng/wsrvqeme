@@ -5,11 +5,12 @@
 /* Palette: a weather-chart vocabulary. Sea-mist ground, marine ink, one teal for the forecast,
    amber reserved for "the forecast ran high". */
 :root {
-  --mist: #e8eeed;
-  --paper: #f8faf9;
+  --mist: #eef2f1;
+  --paper: #ffffff;
   --ink: #0f2b36;
   --ink-2: #4a6670;
-  --line: #c9d6d4;
+  --ink-3: #6f878f;
+  --line: #d6e0de;
   --teal: #0b7a8f;
   --teal-soft: rgba(11, 122, 143, 0.16);
   --amber: #9a5608;
@@ -19,8 +20,9 @@
   --font-body: 'Archivo Variable', system-ui, -apple-system, 'Segoe UI', sans-serif;
   --font-data: 'IBM Plex Mono', ui-monospace, Menlo, Consolas, monospace;
 
-  --radius: 6px;
+  --radius: 10px;
   --gutter: 16px;
+  --shadow: 0 1px 2px rgba(15, 43, 54, 0.06), 0 6px 18px rgba(15, 43, 54, 0.05);
   color-scheme: light;
 }
 
@@ -87,14 +89,39 @@ a {
   padding: 0 var(--gutter) 64px;
 }
 
-.masthead {
+.topbar {
+  background: var(--ink);
+  color: #e9f1f0;
+}
+
+.topbar-inner {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 16px var(--gutter);
   display: flex;
   flex-wrap: wrap;
-  align-items: flex-end;
+  align-items: center;
   justify-content: space-between;
-  gap: 16px 32px;
-  padding: 28px 0 20px;
-  border-bottom: 2px solid var(--ink);
+  gap: 14px 32px;
+}
+
+.page-head {
+  padding: 32px 0 0;
+}
+
+.page-head h2 {
+  font-size: 1.75rem;
+  letter-spacing: -0.015em;
+  margin: 6px 0 6px;
+}
+
+.page-head p {
+  color: var(--ink-2);
+  max-width: 70ch;
+}
+
+.page-head .eyebrow {
+  color: var(--teal);
 }
 
 .brand {
@@ -105,17 +132,31 @@ a {
 
 .brand svg {
   flex: none;
-  color: var(--teal);
+  color: #5cc6d6;
+}
+
+/* The turbine turns slowly: the one bit of motion in the app, and it stops for reduced motion. */
+.brand .blades {
+  transform-box: view-box;
+  transform-origin: 19px 20px;
+  animation: turn 10s linear infinite;
+}
+
+@keyframes turn {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .brand h1 {
-  font-size: 1.6rem;
+  font-size: 1.45rem;
   font-stretch: 112%;
   font-weight: 700;
+  color: #fff;
 }
 
 .brand p {
-  color: var(--ink-2);
+  color: #a9c0c4;
   font-size: 0.875rem;
   margin-top: 2px;
 }
@@ -123,34 +164,46 @@ a {
 .tabs {
   display: flex;
   gap: 4px;
+  padding: 4px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
 }
 
 .tab {
   appearance: none;
-  border: 1px solid transparent;
+  border: 0;
   background: none;
-  color: var(--ink-2);
+  color: #c3d5d8;
   font: inherit;
   font-size: 0.9375rem;
   font-weight: 600;
-  padding: 8px 14px;
-  border-radius: var(--radius);
+  padding: 8px 16px;
+  border-radius: 999px;
   cursor: pointer;
   text-decoration: none;
+  white-space: nowrap;
 }
 
 .tab:hover {
-  color: var(--ink);
-  background: rgba(15, 43, 54, 0.06);
+  color: #fff;
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .tab[aria-current='page'] {
-  color: var(--paper);
-  background: var(--ink);
+  color: var(--ink);
+  background: #fff;
+}
+
+.tab:focus-visible {
+  outline-color: #5cc6d6;
 }
 
 main {
-  padding-top: 28px;
+  padding-top: 24px;
 }
 
 .footer {
@@ -170,7 +223,8 @@ main {
   background: var(--paper);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  padding: 20px;
+  padding: 22px 24px;
+  box-shadow: var(--shadow);
 }
 
 .stack > * + * {
@@ -178,7 +232,7 @@ main {
 }
 
 .panel h2 {
-  font-size: 1.0625rem;
+  font-size: 1.125rem;
 }
 
 .panel .sub {
@@ -197,10 +251,18 @@ main {
   color: var(--ink-2);
 }
 
+.briefing-block {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 24px 26px;
+  box-shadow: var(--shadow);
+}
+
 .briefing {
   font-size: 1.3125rem;
-  line-height: 1.4;
-  max-width: 62ch;
+  line-height: 1.45;
+  max-width: 68ch;
   font-weight: 450;
 }
 
@@ -245,25 +307,46 @@ main {
 }
 
 .grid.stats {
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr));
-  gap: 0;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--paper);
-  overflow: hidden;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
+  gap: 14px;
+}
+
+/* Six numbers read best as two rows of three, never five and an orphan. */
+.grid.stats.six {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
+}
+
+/* Vertical rhythm comes from .stack and .hero, not from the browser's default <dl> margins. */
+dl.grid.stats {
+  margin-inline: 0;
+  margin-bottom: 0;
+}
+
+.hero dl.grid.stats {
+  margin-top: 0;
 }
 
 .stat {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
   padding: 16px 18px;
-  border-right: 1px solid var(--line);
-  border-bottom: 1px solid var(--line);
-  margin: 0 -1px -1px 0;
+  box-shadow: var(--shadow);
+}
+
+/* Inside a panel the cards sit on white already: give them a tint instead of a second shadow. */
+.panel .stat {
+  background: #f4f7f6;
+  box-shadow: none;
 }
 
 .stat dt {
-  font-size: 0.8125rem;
-  color: var(--ink-2);
-  font-weight: 600;
+  font-size: 0.75rem;
+  font-weight: 650;
+  font-stretch: 108%;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--ink-3);
 }
 
 .stat dd {
@@ -272,10 +355,10 @@ main {
 
 .stat .value {
   font-family: var(--font-data);
-  font-size: 1.5rem;
+  font-size: 1.65rem;
   font-weight: 500;
   display: block;
-  margin: 4px 0 2px;
+  margin: 6px 0 4px;
 }
 
 .stat .value.warn {
@@ -295,7 +378,11 @@ main {
   flex-wrap: wrap;
   align-items: flex-end;
   gap: 16px 28px;
-  margin-bottom: 20px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 14px 18px;
+  box-shadow: var(--shadow);
 }
 
 .field label,
@@ -349,8 +436,25 @@ input[type='time'] {
 }
 
 .btn:hover:not(:disabled) {
-  background: #fff;
+  background: #f4f7f6;
   border-color: var(--ink-2);
+}
+
+.btn.primary {
+  color: #fff;
+  background: var(--teal);
+  border-color: var(--teal);
+  border-radius: var(--radius);
+}
+
+.btn.primary:hover:not(:disabled) {
+  background: #0a6677;
+  border-color: #0a6677;
+}
+
+.btn.primary:disabled {
+  color: #fff;
+  opacity: 0.6;
 }
 
 .btn:disabled {
@@ -696,6 +800,10 @@ td {
   max-width: 72ch;
 }
 
+.panel > h2 + .prose {
+  margin-top: 18px;
+}
+
 .prose h3 {
   margin: 28px 0 8px;
   font-size: 1rem;
@@ -737,7 +845,13 @@ dl.facts dd {
 
 @media (max-width: 640px) {
   .brand h1 {
-    font-size: 1.3rem;
+    font-size: 1.2rem;
+  }
+  .page-head h2 {
+    font-size: 1.4rem;
+  }
+  .briefing-block {
+    padding: 18px;
   }
   .briefing {
     font-size: 1.125rem;
@@ -751,7 +865,8 @@ dl.facts dd {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .skeleton {
+  .skeleton,
+  .brand .blades {
     animation: none;
   }
   * {

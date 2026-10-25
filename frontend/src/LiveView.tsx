@@ -36,7 +36,7 @@ export function LiveView() {
   return (
     <div className="stack">
       <div className="controls">
-        <button className="btn" style={{ padding: '0 16px' }} onClick={() => setRefresh((n) => n + 1)} disabled={live.loading}>
+        <button className="btn primary" style={{ padding: '0 16px' }} onClick={() => setRefresh((n) => n + 1)} disabled={live.loading}>
           {live.loading ? 'Refreshing…' : 'Refresh now'}
         </button>
         {d && (
@@ -121,7 +121,7 @@ function Briefing({ d }: { d: LiveResponse }) {
   const meanNow = siteSpeeds.length ? siteSpeeds.reduce((a, b) => a + b, 0) / siteSpeeds.length : null
 
   return (
-    <div>
+    <div className="briefing-block">
       <p className="briefing">
         {latest && (
           <>
@@ -154,7 +154,7 @@ function NowStrip({ d }: { d: LiveResponse }) {
   // published during it, which is partly a hindcast.
   const c = d.now_check
   return (
-    <dl className="grid stats" style={{ margin: 0 }}>
+    <dl className="grid stats">
       <Stat label="Wind output, latest half-hour" value={mw(latest.generation_mw)} hint={`from ${clock(latest.start)} UTC, metered`} />
       <Stat
         label="Forecast for that hour"
