@@ -21,13 +21,18 @@ CutoffParam = Query(
     description="HH:MM (UTC; equals UK time in January) by which the day-ahead purchase must be decided on the previous day",
 )
 
+# Day D sees finished days up to D-2, so the first band needs FIRST_DELIVERY + MIN_HISTORY_DAYS + 1.
+_FIRST_BAND = analytics.FIRST_DELIVERY + timedelta(days=analytics.MIN_HISTORY_DAYS + 1)
+
 NOTES = [
     "All times are UTC. January is GMT, so UTC equals UK local time.",
     "Forecasts come from Elexon WINDFOR and actuals from FUELHH (fuelType WIND), national level only.",
     "A purchase decision made on day D-1 at the cutoff may only use forecasts published at or before that time.",
     "Forecasts are hourly; actuals are half-hourly. Each forecast hour is compared with the mean of its two half-hours.",
     "Error = forecast - actual. Positive error means the wind forecast was higher than what was generated.",
-    "The uncertainty band is the 10th-90th percentile of January errors, so it describes January, not the future.",
+    "On the buying page the likely range and the bias come only from delivery days already finished at the decision "
+    f"time, so they appear from {_FIRST_BAND.day} {_FIRST_BAND:%B}. The accuracy page looks back over the whole month.",
+    "Decisions taken on 1 January before that day's first release (02:30) use the releases of 31 December.",
 ]
 
 
@@ -51,6 +56,11 @@ async def http_client() -> AsyncIterator[httpx.AsyncClient]:
     """One short-lived client per request: safe on serverless hosts where event loops are not shared."""
     async with httpx.AsyncClient(headers={"User-Agent": "wind-day-ahead-desk"}) as client:
         yield client
+
+
+def current_time() -> datetime:
+    """The clock, as a dependency so tests can pin it."""
+    return datetime.now(timezone.utc)
 
 
 @router.get("/health")
@@ -105,10 +115,12 @@ def publications(delivery_date: date) -> schemas.PublicationsResponse:
 
 
 @router.get("/live", response_model=schemas.LiveResponse)
-async def live_now(client: httpx.AsyncClient = Depends(http_client)) -> schemas.LiveResponse:
+async def live_now(
+    client: httpx.AsyncClient = Depends(http_client), now: datetime = Depends(current_time)
+) -> schemas.LiveResponse:
     """Today's Elexon forecast and wind output, plus weather. Outside the January analysis; see app/live.py."""
-    band = analytics.error_band(analytics.backtest(load_dataset(), analytics.DEFAULT_CUTOFF))
-    return await live.build_live(client, datetime.now(timezone.utc), band)
+    band = analytics.band_for_cutoff(load_dataset(), analytics.DEFAULT_CUTOFF)  # cached after the first call
+    return await live.build_live(client, now, band)
 
 
 @router.get("/accuracy", response_model=schemas.AccuracyResponse)

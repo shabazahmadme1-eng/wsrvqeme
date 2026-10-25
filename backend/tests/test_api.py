@@ -1,10 +1,11 @@
 """Contract tests against the real January snapshot in backend/data."""
 
-from datetime import datetime
+from datetime import date, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
 
+from app import analytics
 from app.main import app
 from app.store import load_dataset
 
@@ -32,12 +33,41 @@ def test_decision_never_looks_ahead(delivery, cutoff):
     assert resp.status_code == 200
     body = resp.json()
     decided_at = datetime.fromisoformat(body["decision_time"])
-    assert len(body["points"]) == 24
+    assert len(body["points"]) + len(body["missing_hours"]) == 24
     for p in body["points"]:
         assert datetime.fromisoformat(p["published"]) <= decided_at
         assert p["horizon_h"] > 0
-        assert p["low_mw"] < p["high_mw"]
         assert p["target"][:10] == delivery
+    # The band may only use delivery days that had finished by the decision time.
+    if body["band"] is not None:
+        assert date.fromisoformat(body["band"]["history_to"]) <= date.fromisoformat(delivery) - timedelta(days=2)
+
+
+def test_band_is_withheld_until_three_days_have_finished():
+    assert client.get("/api/decision", params={"delivery_date": "2026-01-05"}).json()["band"] is None
+    band = client.get("/api/decision", params={"delivery_date": "2026-01-06"}).json()["band"]
+    assert band["history_days"] == 3 and band["history_to"] == "2026-01-04"
+
+
+def test_likely_range_never_goes_below_zero():
+    for delivery in analytics.delivery_dates():
+        for p in client.get("/api/decision", params={"delivery_date": delivery.isoformat()}).json()["points"]:
+            if p["low_mw"] is not None:
+                assert 0 <= p["low_mw"] <= p["high_mw"]
+
+
+def test_early_cutoff_reports_the_hours_no_release_reached():
+    # Before the first release of D-1 (02:30), the newest release in hand stops at 21:00 on D.
+    body = client.get("/api/decision", params={"delivery_date": "2026-01-03", "cutoff": "01:00"}).json()
+    assert [h[11:16] for h in body["missing_hours"]] == ["22:00", "23:00"]
+    assert body["summary"]["hours"] == 22
+
+
+def test_first_day_uses_the_releases_of_31_december():
+    # A decision at 02:00 on 1 Jan predates that day's first release, so it relies on 31 Dec's last one.
+    resp = client.get("/api/decision", params={"delivery_date": "2026-01-02", "cutoff": "02:00"})
+    assert resp.status_code == 200
+    assert {p["published"] for p in resp.json()["points"]} == {"2025-12-31T22:30:00Z"}
 
 
 def test_decision_rejects_dates_outside_january_decisions():
@@ -50,12 +80,6 @@ def test_decision_rejects_bad_cutoff():
     assert client.get("/api/decision", params={"delivery_date": "2026-01-10", "cutoff": "24:00"}).status_code == 422
 
 
-def test_decision_before_any_forecast_exists_is_404():
-    # The first January forecast is published at 02:30 on 1 Jan, so a 02:00 cutoff has nothing to show for 2 Jan.
-    resp = client.get("/api/decision", params={"delivery_date": "2026-01-02", "cutoff": "02:00"})
-    assert resp.status_code == 404
-
-
 def test_accuracy_is_internally_consistent():
     body = client.get("/api/accuracy").json()
     overall = body["overall"]
@@ -65,7 +89,10 @@ def test_accuracy_is_internally_consistent():
     assert overall["mae_mw"] <= overall["rmse_mw"]
     assert overall["p50_abs_error_mw"] <= overall["p90_abs_error_mw"] <= overall["max_abs_error_mw"]
     assert body["baseline"]["metrics"]["mae_mw"] > overall["mae_mw"]  # forecast beats naive persistence
+    assert body["baseline"]["metrics"]["n"] == overall["n"]  # the baseline exists for every scored hour
     assert 0.5 < body["band"]["leave_one_day_out_coverage"] < 1.0
+    assert 0.5 < body["band"]["walk_forward_coverage"] < 1.0
+    assert len(body["by_delivery_day"]) == 31
 
 
 def test_horizon_buckets():
@@ -85,6 +112,6 @@ def test_publications_lists_the_decision_day_releases():
     assert client.get("/api/publications", params={"delivery_date": "2026-03-01"}).status_code == 422
 
 
-def test_publications_has_no_previous_release_on_the_first_day():
+def test_publications_on_the_first_day_point_back_to_31_december():
     body = client.get("/api/publications", params={"delivery_date": "2026-01-02"}).json()
-    assert body["previous_release"] is None
+    assert body["previous_release"] == "2025-12-31T22:30:00Z"

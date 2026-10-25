@@ -5,6 +5,8 @@ Vocabulary used throughout:
   * cutoff        - time of day on the *previous* day by which the day-ahead purchase must be decided.
   * decision time - (delivery day - 1) at the cutoff. Only forecasts published at or before it may be used.
   * error         - forecast minus actual (MW). Positive = the wind forecast was too optimistic.
+  * finished days - delivery days whose outcome is fully known at a decision time: for delivery day D
+                    that is D-2 and earlier (D-1 is still in progress at the D-1 cutoff).
 """
 
 from __future__ import annotations
@@ -13,6 +15,7 @@ import math
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
+from functools import lru_cache
 
 from . import schemas
 from .store import Dataset
@@ -25,7 +28,7 @@ LAST_DELIVERY = DECISION_TO + timedelta(days=1)
 DEFAULT_CUTOFF = time(9, 0)
 
 BAND_LEVEL = 0.8  # the band spans the 10th to 90th percentile of past errors
-MIN_BIAS_HISTORY_DAYS = 3
+MIN_HISTORY_DAYS = 3  # finished days needed before a walk-forward band or bias estimate is shown
 HISTOGRAM_BIN_MW = 1000
 
 
@@ -63,7 +66,8 @@ def delivery_dates() -> list[date]:
 
 
 def _persistence(ds: Dataset, target: datetime, as_of: datetime) -> float | None:
-    """Naive baseline: the output of the same hour on the most recent day that was complete at `as_of`."""
+    """Naive baseline: the output of the same hour of the day, from the latest day on which that hour had
+    already ended at `as_of`. With a 09:00 cutoff on D-1 that is D-1 for hours 00-07 and D-2 for the rest."""
     candidate = target - timedelta(days=1)
     while candidate + timedelta(hours=1) > as_of:
         candidate -= timedelta(days=1)
@@ -93,13 +97,33 @@ def build_points(ds: Dataset, delivery: date, cutoff: time) -> list[Point]:
     return points
 
 
+@lru_cache(maxsize=64)
 def backtest(ds: Dataset, cutoff: time) -> dict[date, list[Point]]:
-    """Every January decision, replayed exactly as it would have been taken."""
+    """Every January decision, replayed exactly as it would have been taken.
+
+    Cached per (dataset, cutoff): the snapshot never changes while the process runs. Callers must not
+    mutate the returned dict.
+    """
     return {d: pts for d in delivery_dates() if (pts := build_points(ds, d, cutoff))}
 
 
 def _scored(days: dict[date, list[Point]]) -> list[Point]:
     return [p for pts in days.values() for p in pts if p.actual is not None]
+
+
+def finished_before(days: dict[date, list[Point]], delivery: date) -> dict[date, list[Point]]:
+    """The delivery days whose outcomes were fully known when the decision for `delivery` was taken."""
+    return {d: pts for d, pts in days.items() if d <= delivery - timedelta(days=2)}
+
+
+def _errors(days: dict[date, list[Point]]) -> list[float]:
+    return [p.error for pts in days.values() for p in pts if p.error is not None]
+
+
+def _band_edges(sorted_errors: list[float]) -> tuple[float, float]:
+    """10th and 90th percentile of the error, for an 80% band."""
+    tail = (1 - BAND_LEVEL) / 2
+    return percentile(sorted_errors, tail), percentile(sorted_errors, 1 - tail)
 
 
 # ---------------------------------------------------------------------------------------- statistics
@@ -125,16 +149,17 @@ def compute_metrics(pairs: list[tuple[float, float]]) -> schemas.Metrics | None:
     mean_actual = sum(a for _, a in pairs) / n
     mae = sum(abs_errors) / n
     bias = sum(errors) / n
+    positive = [(f, a) for f, a in pairs if a > 0]  # zero output has no percentage error: out of sum and count
     return schemas.Metrics(
         n=n,
         mean_actual_mw=mean_actual,
         mean_forecast_mw=sum(f for f, _ in pairs) / n,
         bias_mw=bias,
-        bias_pct=100 * bias / mean_actual,
+        bias_pct=100 * bias / mean_actual if mean_actual > 0 else None,
         mae_mw=mae,
-        mae_pct=100 * mae / mean_actual,
+        mae_pct=100 * mae / mean_actual if mean_actual > 0 else None,
         rmse_mw=math.sqrt(sum(e * e for e in errors) / n),
-        mape_pct=100 * sum(abs(f - a) / a for f, a in pairs if a > 0) / n,
+        mape_pct=100 * sum(abs(f - a) / a for f, a in positive) / len(positive) if positive else None,
         p50_abs_error_mw=percentile(abs_errors, 0.5),
         p90_abs_error_mw=percentile(abs_errors, 0.9),
         p95_abs_error_mw=percentile(abs_errors, 0.95),
@@ -155,33 +180,70 @@ def _group_metrics(key: str, points: list[Point]) -> schemas.GroupMetrics:
 
 
 def error_band(days: dict[date, list[Point]]) -> schemas.BandInfo | None:
-    """Empirical 80% band for the error, plus an honest check of how well it generalises.
+    """Empirical 80% band for the error over the whole month, plus two honest checks of it.
 
-    `leave_one_day_out_coverage` recomputes the band without day D and asks whether day D's errors fall
-    inside it. In-sample coverage is ~80% by construction; the leave-one-out figure is the real test.
+    * leave-one-day-out: rebuild the band without day D and ask whether D's errors fall inside it.
+    * walk-forward: rebuild it from the days finished before D's decision (what the Buying page does) and
+      ask the same. In-sample coverage is ~80% by construction; these two are the real tests.
     """
     scored = {d: [p.error for p in pts if p.error is not None] for d, pts in days.items()}
     scored = {d: errs for d, errs in scored.items() if errs}
     if len(scored) < 2:
         return None
-    lo_q, hi_q = (1 - BAND_LEVEL) / 2, 1 - (1 - BAND_LEVEL) / 2
     everything = sorted(e for errs in scored.values() for e in errs)
-    p10, p90 = percentile(everything, lo_q), percentile(everything, hi_q)
+    p10, p90 = _band_edges(everything)
     in_sample = sum(p10 <= e <= p90 for e in everything) / len(everything)
 
-    hits = total = 0
+    lodo_hits = lodo_total = 0
     for day, errs in scored.items():
-        others = sorted(e for d, es in scored.items() if d != day for e in es)
-        lo, hi = percentile(others, lo_q), percentile(others, hi_q)
-        hits += sum(lo <= e <= hi for e in errs)
-        total += len(errs)
+        lo, hi = _band_edges(sorted(e for d, es in scored.items() if d != day for e in es))
+        lodo_hits += sum(lo <= e <= hi for e in errs)
+        lodo_total += len(errs)
+
+    wf_hits = wf_total = wf_days = 0
+    for day, errs in scored.items():
+        finished = [es for d, es in scored.items() if d <= day - timedelta(days=2)]
+        if len(finished) < MIN_HISTORY_DAYS:
+            continue
+        lo, hi = _band_edges(sorted(e for es in finished for e in es))
+        wf_hits += sum(lo <= e <= hi for e in errs)
+        wf_total += len(errs)
+        wf_days += 1
+
     return schemas.BandInfo(
         level=BAND_LEVEL,
         error_p10_mw=p10,
         error_p90_mw=p90,
         in_sample_coverage=in_sample,
-        leave_one_day_out_coverage=hits / total,
+        leave_one_day_out_coverage=lodo_hits / lodo_total,
+        walk_forward_coverage=wf_hits / wf_total if wf_total else None,
+        walk_forward_days=wf_days,
         n_days=len(scored),
+    )
+
+
+@lru_cache(maxsize=64)
+def band_for_cutoff(ds: Dataset, cutoff: time) -> schemas.BandInfo | None:
+    """Month-wide band for a cutoff, cached (the live view asks for it on every poll)."""
+    return error_band(backtest(ds, cutoff))
+
+
+def decision_band(history: dict[date, list[Point]]) -> schemas.DecisionBand | None:
+    """Band and bias from the finished days only, so the Buying page shows what a buyer could have known."""
+    if len(history) < MIN_HISTORY_DAYS:
+        return None
+    errors = sorted(_errors(history))
+    if not errors:
+        return None
+    p10, p90 = _band_edges(errors)
+    return schemas.DecisionBand(
+        level=BAND_LEVEL,
+        error_p10_mw=p10,
+        error_p90_mw=p90,
+        bias_mw=sum(errors) / len(errors),
+        history_days=len(history),
+        history_from=min(history),
+        history_to=max(history),
     )
 
 
@@ -189,7 +251,7 @@ def bias_correction(days: dict[date, list[Point]]) -> schemas.BiasCorrection | N
     """Walk-forward test of "subtract the bias we have seen so far".
 
     For delivery day D the bias estimate is the average daily error of days <= D-2 (day D-1 is still
-    in progress at the D-1 cutoff, so it is not yet knowable). Needs MIN_BIAS_HISTORY_DAYS of history.
+    in progress at the D-1 cutoff, so it is not yet knowable). Needs MIN_HISTORY_DAYS of history.
     """
     daily_bias: dict[date, float] = {}
     for d, pts in days.items():
@@ -202,7 +264,7 @@ def bias_correction(days: dict[date, list[Point]]) -> schemas.BiasCorrection | N
     improved = evaluated = 0
     for d in sorted(days):
         history = [b for hd, b in daily_bias.items() if hd <= d - timedelta(days=2)]
-        if len(history) < MIN_BIAS_HISTORY_DAYS:
+        if len(history) < MIN_HISTORY_DAYS:
             continue
         shift = sum(history) / len(history)
         scored = [p for p in days[d] if p.actual is not None]
@@ -221,7 +283,7 @@ def bias_correction(days: dict[date, list[Point]]) -> schemas.BiasCorrection | N
     raw_m, adj_m = compute_metrics(raw_pairs), compute_metrics(adj_pairs)
     assert raw_m and adj_m
     return schemas.BiasCorrection(
-        min_history_days=MIN_BIAS_HISTORY_DAYS,
+        min_history_days=MIN_HISTORY_DAYS,
         n_days_evaluated=evaluated,
         n_points=raw_m.n,
         mae_raw_mw=raw_m.mae_mw,
@@ -236,35 +298,42 @@ def bias_correction(days: dict[date, list[Point]]) -> schemas.BiasCorrection | N
 # ---------------------------------------------------------------------------------- API-level views
 
 
+def band_around(forecast: float, p10_error: float, p90_error: float) -> tuple[float, float]:
+    """actual = forecast - error, so the band on the actual is [forecast - p90, forecast - p10].
+    Wind output cannot be negative, so both edges are floored at 0 MW."""
+    return max(0.0, forecast - p90_error), max(0.0, forecast - p10_error)
+
+
 def decision_view(ds: Dataset, delivery: date, cutoff: time) -> schemas.DecisionResponse | None:
     days = backtest(ds, cutoff)
-    band = error_band(days)
     points = days.get(delivery)
-    if not points or band is None:
+    if not points:
         return None
+    # Only what had happened by the decision time: no later day, and not the delivery day itself.
+    band = decision_band(finished_before(days, delivery))
 
-    scored = _scored(days)
-    bias = sum(p.error for p in scored) / len(scored)  # type: ignore[misc]
-
-    # actual = forecast - error, so the band on the actual is [forecast - p90_error, forecast - p10_error].
-    out_points = [
-        schemas.DecisionPoint(
-            target=p.target,
-            forecast_mw=p.forecast,
-            published=p.published,
-            horizon_h=p.horizon_h,
-            low_mw=p.forecast - band.error_p90_mw,
-            high_mw=p.forecast - band.error_p10_mw,
-            previous_forecast_mw=p.previous_forecast,
-            revision_mw=None if p.previous_forecast is None else p.forecast - p.previous_forecast,
-            actual_mw=p.actual,
+    out_points = []
+    for p in points:
+        low, high = band_around(p.forecast, band.error_p10_mw, band.error_p90_mw) if band else (None, None)
+        out_points.append(
+            schemas.DecisionPoint(
+                target=p.target,
+                forecast_mw=p.forecast,
+                published=p.published,
+                horizon_h=p.horizon_h,
+                low_mw=low,
+                high_mw=high,
+                previous_forecast_mw=p.previous_forecast,
+                revision_mw=None if p.previous_forecast is None else p.forecast - p.previous_forecast,
+                actual_mw=p.actual,
+            )
         )
-        for p in points
-    ]
+    covered = {p.target for p in points}
     peak = max(points, key=lambda p: p.forecast)
     trough = min(points, key=lambda p: p.forecast)
     revisions = [p.forecast - p.previous_forecast for p in points if p.previous_forecast is not None]
     summary = schemas.DaySummary(
+        hours=len(points),
         mean_mw=sum(p.forecast for p in points) / len(points),
         energy_mwh=sum(p.forecast for p in points),  # hourly MW averages x 1 h
         peak_mw=peak.forecast,
@@ -278,13 +347,14 @@ def decision_view(ds: Dataset, delivery: date, cutoff: time) -> schemas.Decision
         cutoff_utc=cutoff.strftime("%H:%M"),
         decision_time=decision_time(delivery, cutoff),
         points=out_points,
+        missing_hours=[h for h in delivery_hours(delivery) if h not in covered],
         summary=summary,
         band=band,
-        historical_bias_mw=bias,
         day_accuracy=compute_metrics(_pairs(points)),
     )
 
 
+@lru_cache(maxsize=64)
 def accuracy_view(ds: Dataset, cutoff: time) -> schemas.AccuracyResponse | None:
     days = backtest(ds, cutoff)
     scored = _scored(days)
@@ -299,10 +369,11 @@ def accuracy_view(ds: Dataset, cutoff: time) -> schemas.AccuracyResponse | None:
     fc_m = compute_metrics(_pairs(both))
     assert base_m and fc_m
     baseline = schemas.Baseline(
-        name="Same hour, last known day",
+        name="Same hour, latest seen",
         description=(
-            "Predict each hour with the output of the same hour on the most recent day already complete "
-            "at the cutoff. The forecast has to beat this to be worth paying for."
+            "Predict each hour with the output of the same hour of the day, from the latest day on which that "
+            "hour had already ended at the cutoff (the day before for hours earlier than the cutoff, two days "
+            "before for later ones). The forecast has to beat this to be worth paying for."
         ),
         metrics=base_m,
         skill_vs_baseline_pct=100 * (base_m.mae_mw - fc_m.mae_mw) / base_m.mae_mw,
@@ -350,6 +421,8 @@ def horizon_view(ds: Dataset, bucket_h: int) -> schemas.HorizonResponse:
         if actual is None:
             continue
         for published, forecast in history:
+            if published.date() < DECISION_FROM:  # the snapshot also holds 31 Dec releases, for 1 Jan decisions
+                continue
             horizon_h = (target - published).total_seconds() / 3600
             errors_by_bucket[int(horizon_h // bucket_h)].append(forecast - actual)
 

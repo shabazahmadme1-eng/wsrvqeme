@@ -5,11 +5,11 @@ export interface Metrics {
   mean_actual_mw: number
   mean_forecast_mw: number
   bias_mw: number
-  bias_pct: number
+  bias_pct: number | null
   mae_mw: number
-  mae_pct: number
+  mae_pct: number | null
   rmse_mw: number
-  mape_pct: number
+  mape_pct: number | null
   p50_abs_error_mw: number
   p90_abs_error_mw: number
   p95_abs_error_mw: number
@@ -37,8 +37,8 @@ export interface DecisionPoint {
   forecast_mw: number
   published: string
   horizon_h: number
-  low_mw: number
-  high_mw: number
+  low_mw: number | null
+  high_mw: number | null
   previous_forecast_mw: number | null
   revision_mw: number | null
   actual_mw: number | null
@@ -50,7 +50,20 @@ export interface BandInfo {
   error_p90_mw: number
   in_sample_coverage: number
   leave_one_day_out_coverage: number
+  walk_forward_coverage: number | null
+  walk_forward_days: number
   n_days: number
+}
+
+/** Built only from delivery days already finished at the decision time. */
+export interface DecisionBand {
+  level: number
+  error_p10_mw: number
+  error_p90_mw: number
+  bias_mw: number
+  history_days: number
+  history_from: string
+  history_to: string
 }
 
 export interface DecisionResponse {
@@ -58,7 +71,9 @@ export interface DecisionResponse {
   cutoff_utc: string
   decision_time: string
   points: DecisionPoint[]
+  missing_hours: string[]
   summary: {
+    hours: number
     mean_mw: number
     energy_mwh: number
     peak_mw: number
@@ -67,8 +82,7 @@ export interface DecisionResponse {
     trough_hour: string
     mean_revision_mw: number | null
   }
-  band: BandInfo
-  historical_bias_mw: number
+  band: DecisionBand | null
   day_accuracy: Metrics | null
 }
 
@@ -119,6 +133,7 @@ export interface LiveResponse {
   forecast_published: string | null
   forecast: { target: string; forecast_mw: number; low_mw: number | null; high_mw: number | null }[]
   actuals: { start: string; generation_mw: number }[]
+  now_check: { actual_start: string; actual_mw: number; hour: string; forecast_mw: number; published: string } | null
   weather: {
     observed_at: string | null
     sites: { name: string; latitude: number; longitude: number; wind_speed_100m_ms: number | null; gust_10m_ms: number | null; direction_deg: number | null }[]

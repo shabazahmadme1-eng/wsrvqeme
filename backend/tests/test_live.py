@@ -1,14 +1,14 @@
 """The live view, with both external services replaced by canned responses (no network)."""
 
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from app import live
-from app.main import app, http_client
+from app import live, schemas
+from app.main import app, current_time, http_client
 
 NOW = datetime(2026, 10, 25, 4, 50, tzinfo=timezone.utc)
 
@@ -52,6 +52,8 @@ class Upstream:
         self.calls["elexon"] += 1
         if self.elexon_status != 200:
             return httpx.Response(self.elexon_status, json={})
+        if "FUELHH" in request.url.path:
+            self.fuelhh_params = dict(request.url.params)
         body = windfor_rows() if "WINDFOR" in request.url.path else fuelhh_rows()
         return httpx.Response(200, content=json.dumps(body))
 
@@ -61,9 +63,9 @@ def fresh_cache():
     live.clear_cache()
 
 
-async def run(upstream, band=None):
+async def run(upstream, band=None, now=NOW):
     async with httpx.AsyncClient(transport=httpx.MockTransport(upstream)) as client:
-        return await live.build_live(client, NOW, band)
+        return await live.build_live(client, now, band)
 
 
 async def test_uses_only_the_latest_release_and_future_hours():
@@ -109,6 +111,39 @@ async def test_results_are_cached_between_requests():
     assert upstream.calls == {"elexon": 2, "weather": 1}  # two Elexon endpoints per refresh, weather once
 
 
+async def test_cached_data_reports_when_it_was_fetched():
+    upstream = Upstream()
+    await run(upstream)
+    later = await run(upstream, now=NOW + timedelta(minutes=3))
+    assert later.as_of == NOW  # served from cache, so it must not claim to be 3 minutes fresher
+
+
+async def test_now_check_uses_the_forecast_made_before_the_hour():
+    result = await run(Upstream())
+    check = result.now_check
+    assert check is not None
+    # Latest metered half-hour starts 04:00. The 04:30 release was published inside that hour, so the
+    # comparison uses the 02:30 release: base 9000 + index 2 * 100 for the 04:00 target.
+    assert check.hour == datetime(2026, 10, 25, 4, tzinfo=timezone.utc)
+    assert check.published == datetime(2026, 10, 25, 2, 30, tzinfo=timezone.utc)
+    assert (check.forecast_mw, check.actual_mw) == (9200, 10795)
+
+
+async def test_outturn_query_reaches_the_next_uk_settlement_date():
+    upstream = Upstream()
+    await run(upstream)
+    assert upstream.fuelhh_params["settlementDateTo"] == "2026-10-26"
+
+
+async def test_likely_range_is_floored_at_zero():
+    band = schemas.BandInfo(
+        level=0.8, error_p10_mw=-500, error_p90_mw=50_000, in_sample_coverage=0.8,
+        leave_one_day_out_coverage=0.8, walk_forward_coverage=0.8, walk_forward_days=1, n_days=2,
+    )
+    result = await run(Upstream(), band=band)
+    assert all(p.low_mw == 0 for p in result.forecast)
+
+
 def test_live_endpoint_shape_and_band():
     upstream = Upstream()
 
@@ -116,12 +151,16 @@ def test_live_endpoint_shape_and_band():
         async with httpx.AsyncClient(transport=httpx.MockTransport(upstream)) as client:
             yield client
 
+    # Pin the clock to the canned data, so the test does not depend on when it runs.
     app.dependency_overrides[http_client] = override
+    app.dependency_overrides[current_time] = lambda: NOW
     try:
         body = TestClient(app).get("/api/live").json()
     finally:
         app.dependency_overrides.clear()
     assert body["band"]["n_days"] == 31
+    assert len(body["forecast"]) == 4
     point = body["forecast"][0]
-    assert point["low_mw"] < point["high_mw"]
-    assert set(body["errors"]) <= {"elexon", "weather"}
+    assert 0 <= point["low_mw"] < point["high_mw"]
+    assert body["now_check"]["forecast_mw"] == 9200
+    assert body["errors"] == {}

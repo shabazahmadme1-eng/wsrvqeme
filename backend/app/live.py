@@ -17,7 +17,9 @@ from typing import Any, TypeVar
 import httpx
 
 from . import schemas
+from .analytics import band_around
 from .elexon import BASE_URL as ELEXON_URL
+from .elexon import iso_z
 
 OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast"
 CACHE_TTL_S = 300
@@ -67,10 +69,6 @@ def _parse(value: str) -> datetime:
     return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(timezone.utc)
 
 
-def _iso_z(dt: datetime) -> str:
-    return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
 def _floor_hour(dt: datetime) -> datetime:
     return dt.replace(minute=0, second=0, microsecond=0)
 
@@ -80,9 +78,32 @@ def _floor_hour(dt: datetime) -> datetime:
 
 @dataclass(frozen=True)
 class ElexonLive:
+    fetched_at: datetime
     published: datetime | None
     forecast: list[tuple[datetime, float]]  # (hour start, MW), from the latest release only
     actuals: list[tuple[datetime, float]]  # (half-hour start, MW)
+    check: schemas.LiveNowCheck | None
+
+
+def _now_check(releases: list[dict], actuals: list[tuple[datetime, float]]) -> schemas.LiveNowCheck | None:
+    """Latest metered half-hour vs the forecast for its hour from the last release *before* that hour began.
+
+    Releases published during or after an hour also carry a value for it, but that is a hindcast, not
+    something anyone could have planned on.
+    """
+    if not actuals:
+        return None
+    start, actual = actuals[-1]
+    hour = _floor_hour(start)
+    candidates = [
+        (_parse(r["publishTime"]), float(r["generation"]))
+        for r in releases
+        if _parse(r["startTime"]) == hour and _parse(r["publishTime"]) <= hour
+    ]
+    if not candidates:
+        return None
+    published, forecast = max(candidates)
+    return schemas.LiveNowCheck(actual_start=start, actual_mw=actual, hour=hour, forecast_mw=forecast, published=published)
 
 
 async def _fetch_elexon(client: httpx.AsyncClient, now: datetime) -> ElexonLive:
@@ -91,14 +112,17 @@ async def _fetch_elexon(client: httpx.AsyncClient, now: datetime) -> ElexonLive:
         resp.raise_for_status()
         return resp.json()
 
-    # Releases come every 2 to 4 hours, so the last 12 hours always contain the latest one.
+    # Releases come every 2 to 4 hours, so the last 12 hours always contain the latest one, and the ones
+    # published before the current hour began (needed for the now-check).
     releases, outturn = await asyncio.gather(
-        get("WINDFOR/stream", {"publishDateTimeFrom": _iso_z(now - timedelta(hours=12)), "publishDateTimeTo": _iso_z(now)}),
+        get("WINDFOR/stream", {"publishDateTimeFrom": iso_z(now - timedelta(hours=12)), "publishDateTimeTo": iso_z(now)}),
         get(
             "FUELHH/stream",
             {
                 "settlementDateFrom": (now - timedelta(days=2)).date().isoformat(),
-                "settlementDateTo": now.date().isoformat(),
+                # Settlement dates are UK dates. In summer the last UTC hour of the day already belongs to
+                # the next UK date, so ask for one day more than the UTC date; future periods just aren't there.
+                "settlementDateTo": (now + timedelta(days=1)).date().isoformat(),
                 "fuelType": "WIND",
             },
         ),
@@ -116,7 +140,7 @@ async def _fetch_elexon(client: httpx.AsyncClient, now: datetime) -> ElexonLive:
         for r in outturn
         if now - timedelta(hours=HISTORY_H) <= _parse(r["startTime"]) <= now
     )
-    return ElexonLive(published, forecast, actuals)
+    return ElexonLive(now, published, forecast, actuals, _now_check(releases, actuals))
 
 
 # ------------------------------------------------------------------------------------- Open-Meteo
@@ -197,20 +221,16 @@ async def build_live(
 
     forecast: list[schemas.LiveForecastPoint] = []
     actuals: list[schemas.LiveActualPoint] = []
-    published = None
+    published = check = None
+    as_of = now
     if isinstance(elexon_result, Exception):
         errors["elexon"] = _describe(elexon_result)
     else:
-        published = elexon_result.published
-        forecast = [
-            schemas.LiveForecastPoint(
-                target=t,
-                forecast_mw=mw,
-                low_mw=None if band is None else mw - band.error_p90_mw,
-                high_mw=None if band is None else mw - band.error_p10_mw,
-            )
-            for t, mw in elexon_result.forecast
-        ]
+        # Cached results are up to 5 minutes old: report when they were fetched, not when they were served.
+        as_of, published, check = elexon_result.fetched_at, elexon_result.published, elexon_result.check
+        for t, mw in elexon_result.forecast:
+            low, high = band_around(mw, band.error_p10_mw, band.error_p90_mw) if band else (None, None)
+            forecast.append(schemas.LiveForecastPoint(target=t, forecast_mw=mw, low_mw=low, high_mw=high))
         actuals = [schemas.LiveActualPoint(start=t, generation_mw=mw) for t, mw in elexon_result.actuals]
 
     weather = None
@@ -225,7 +245,14 @@ async def build_live(
         )
 
     return schemas.LiveResponse(
-        as_of=now, forecast_published=published, forecast=forecast, actuals=actuals, weather=weather, band=band, errors=errors
+        as_of=as_of,
+        forecast_published=published,
+        forecast=forecast,
+        actuals=actuals,
+        now_check=check,
+        weather=weather,
+        band=band,
+        errors=errors,
     )
 
 

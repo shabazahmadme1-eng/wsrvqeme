@@ -37,7 +37,8 @@ export function useRemote<T>(load: (signal: AbortSignal) => Promise<T>, deps: un
     return () => controller.abort()
   }, [key])
 
-  return { data: settled.data, error: settled.error, loading: settled.key !== key }
+  // An error belongs to the request that raised it: while a newer one is loading, don't show it.
+  return { data: settled.data, error: settled.key === key ? settled.error : null, loading: settled.key !== key }
 }
 
 /** Returns `value` only after it has stopped changing for `ms`. Used to avoid one request per slider tick. */

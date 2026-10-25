@@ -41,7 +41,7 @@ export function LiveView() {
         </button>
         {d && (
           <p className="sub" style={{ margin: 0 }}>
-            As of <span className="mono">{clock(d.as_of)} UTC</span>
+            Data fetched <span className="mono">{clock(d.as_of)} UTC</span>
             {d.forecast_published && (
               <>
                 {' '}
@@ -62,6 +62,11 @@ export function LiveView() {
       {live.error && !d && (
         <Notice error title="Couldn't load live data">
           {live.error.message}
+        </Notice>
+      )}
+      {live.error && d && (
+        <Notice error title="Couldn't refresh">
+          {live.error.message}. Still showing the data fetched at {clock(d.as_of)} UTC.
         </Notice>
       )}
       {d?.errors.elexon && (
@@ -145,18 +150,23 @@ function Briefing({ d }: { d: LiveResponse }) {
 function NowStrip({ d }: { d: LiveResponse }) {
   const latest = d.actuals.at(-1)
   if (!latest) return null
-  const hour = isoOf(Math.floor(atMs(latest.start) / 3600_000) * 3600_000)
-  const f = d.forecast.find((p) => isoOf(atMs(p.target)) === hour)
+  // The forecast to compare with is the one made before the hour began (from the API), not a release
+  // published during it, which is partly a hindcast.
+  const c = d.now_check
   return (
     <dl className="grid stats" style={{ margin: 0 }}>
       <Stat label="Wind output, latest half-hour" value={mw(latest.generation_mw)} hint={`from ${clock(latest.start)} UTC, metered`} />
-      <Stat label="Forecast for that hour" value={f ? mw(f.forecast_mw) : '–'} hint={f && d.forecast_published ? `latest release, ${clock(d.forecast_published)}` : 'no forecast for that hour'} />
-      {f && (
+      <Stat
+        label="Forecast for that hour"
+        value={c ? mw(c.forecast_mw) : '–'}
+        hint={c ? `released ${clock(c.published)}, before the hour began` : 'no release before that hour began'}
+      />
+      {c && (
         <Stat
           label="Forecast minus output"
-          value={signedMw(f.forecast_mw - latest.generation_mw)}
-          hint={f.forecast_mw > latest.generation_mw ? 'forecast above what is being produced' : 'forecast below what is being produced'}
-          warn={f.forecast_mw > latest.generation_mw}
+          value={signedMw(c.forecast_mw - c.actual_mw)}
+          hint={c.forecast_mw > c.actual_mw ? 'forecast above what is being produced' : 'forecast below what is being produced'}
+          warn={c.forecast_mw > c.actual_mw}
         />
       )}
     </dl>

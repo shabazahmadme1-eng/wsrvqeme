@@ -20,7 +20,8 @@ def parse_utc(value: str) -> datetime:
     return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(timezone.utc)
 
 
-@dataclass(frozen=True)
+# eq=False keeps identity hashing, so analytics can cache results per dataset with lru_cache.
+@dataclass(frozen=True, eq=False)
 class Dataset:
     # Half-hourly metered wind output (MW), keyed by the start of the settlement period.
     actuals: dict[datetime, float]

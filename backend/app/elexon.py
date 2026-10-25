@@ -25,11 +25,12 @@ def _get_json(client: httpx.Client, path: str, params: dict) -> list[dict]:
             return resp.json()
         except (httpx.HTTPError, ValueError) as exc:  # network error, 4xx/5xx, bad JSON
             last_error = exc
-            time.sleep(2**attempt)
+            if attempt < RETRIES - 1:  # no point waiting after the last attempt
+                time.sleep(2**attempt)
     raise RuntimeError(f"Elexon request failed after {RETRIES} attempts: {path} {params}") from last_error
 
 
-def _iso_z(dt: datetime) -> str:
+def iso_z(dt: datetime) -> str:
     return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
@@ -56,7 +57,7 @@ def fetch_forecasts(client: httpx.Client, publish_from: datetime, publish_to: da
         rows += _get_json(
             client,
             "WINDFOR/stream",
-            {"publishDateTimeFrom": _iso_z(cursor), "publishDateTimeTo": _iso_z(nxt)},
+            {"publishDateTimeFrom": iso_z(cursor), "publishDateTimeTo": iso_z(nxt)},
         )
         cursor = nxt
     return rows

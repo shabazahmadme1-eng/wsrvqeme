@@ -3,10 +3,11 @@
     python scripts/fetch_data.py
 
 Window (all UTC; January is GMT so UTC == UK local time):
-  * forecasts: published 2026-01-01 00:00 .. 2026-02-01 00:00. A purchase decision taken in January is
-    made on the day before delivery, so only forecasts published in January can inform one.
-  * actuals: settlement dates 2026-01-01 .. 2026-02-04. A forecast published late on 31 January can
-    reach 72 hours ahead (to 3 Feb), and we want actuals to score those too.
+  * forecasts: published 2025-12-31 00:00 .. 2026-02-01 00:00. Decisions are taken in January, but one
+    taken in the small hours of 1 January (before that day's first release at 02:30) relies on the
+    releases of 31 December.
+  * actuals: settlement dates 2025-12-30 .. 2026-02-04. The naive baseline for 2 January looks back to
+    31 December, and a forecast published late on 31 January reaches 72 hours ahead (to 3 Feb).
 
 The snapshot is committed to the repo so the deployed app never depends on Elexon being reachable.
 """
@@ -25,9 +26,9 @@ from app import elexon  # noqa: E402
 
 DATA_DIR = Path(__file__).resolve().parents[1] / "data"
 
-PUBLISH_FROM = datetime(2026, 1, 1, tzinfo=timezone.utc)
+PUBLISH_FROM = datetime(2025, 12, 31, tzinfo=timezone.utc)
 PUBLISH_TO = datetime(2026, 2, 1, tzinfo=timezone.utc)
-ACTUALS_FROM = date(2026, 1, 1)
+ACTUALS_FROM = date(2025, 12, 30)
 ACTUALS_TO = date(2026, 2, 4)
 
 

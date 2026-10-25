@@ -52,6 +52,19 @@ def test_metrics_on_known_pairs():
     assert analytics.compute_metrics([]) is None
 
 
+def test_mape_leaves_zero_output_hours_out_of_the_average():
+    # (110 vs 100) is a 10% miss; the zero-output hour has no percentage error and must not dilute it.
+    m = analytics.compute_metrics([(110.0, 100.0), (50.0, 0.0)])
+    assert m is not None and m.mape_pct == pytest.approx(10.0)
+    only_zero = analytics.compute_metrics([(50.0, 0.0)])
+    assert only_zero is not None
+    assert only_zero.mape_pct is None and only_zero.mae_pct is None  # no output at all: no percentages, no crash
+
+
+def test_band_around_floors_at_zero():
+    assert analytics.band_around(3000.0, -500.0, 4000.0) == (0.0, 3500.0)
+
+
 def test_decision_uses_only_forecasts_published_before_the_cutoff():
     target = at(5, 12)
     before, after = at(4, 7, 30), at(4, 9, 30)
@@ -116,3 +129,19 @@ def test_error_band_leave_one_day_out_is_not_in_sample():
     assert band is not None
     assert band.leave_one_day_out_coverage < band.in_sample_coverage
     assert band.n_days == 11
+
+
+def test_decision_band_sees_only_days_finished_before_the_decision():
+    # Day 9 is decided on day 8, so days 8 and 9 are unknowable; their huge errors must not reach the band.
+    days = _days_with_constant_error({2: 100.0, 3: 200.0, 4: 300.0, 5: 400.0, 6: 500.0, 7: 600.0, 8: 9000.0, 9: 9000.0})
+    band = analytics.decision_band(analytics.finished_before(days, date(2026, 1, 9)))
+    assert band is not None
+    assert band.history_to == date(2026, 1, 7)
+    assert band.bias_mw == pytest.approx(350.0)  # mean of 100..600
+    assert band.error_p90_mw < 1000
+
+
+def test_decision_band_needs_three_finished_days():
+    days = _days_with_constant_error({2: 100.0, 3: 100.0, 4: 100.0})
+    assert analytics.decision_band(analytics.finished_before(days, date(2026, 1, 5))) is None  # only 2 and 3
+    assert analytics.decision_band(analytics.finished_before(days, date(2026, 1, 6))) is not None

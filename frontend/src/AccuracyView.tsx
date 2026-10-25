@@ -46,7 +46,7 @@ export function AccuracyView({ cutoff, onCutoff }: Props) {
           <Stats a={a} />
           <div className="grid two">
             <ByDay rows={a.by_delivery_day} />
-            <ByHour rows={a.by_hour_of_day} />
+            <ByHour rows={a.by_hour_of_day} days={a.by_delivery_day.length} />
           </div>
           <div className="grid two">
             <Histogram a={a} />
@@ -73,10 +73,10 @@ function Headline({ a }: { a: AccuracyResponse }) {
     <div>
       <p className="briefing">
         Across every January decision, the forecast available at <strong>{a.cutoff_utc}</strong> missed by <strong>{mw(o.mae_mw)}</strong> an hour on average, which is{' '}
-        <strong>{pct(o.mae_pct, 0)}</strong> of the wind actually generated.
+        <strong>{o.mae_pct === null ? '–' : pct(o.mae_pct, 0)}</strong> of the wind actually generated.
       </p>
       <p className="briefing">
-        The misses were not random: the forecast ran <strong className="warn">{mw(Math.abs(o.bias_mw))}</strong> {high ? 'too high' : 'too low'} on average ({signedPct(o.bias_pct)}), and was
+        The misses were not random: the forecast ran <strong className="warn">{mw(Math.abs(o.bias_mw))}</strong> {high ? 'too high' : 'too low'} on average{o.bias_pct === null ? '' : ` (${signedPct(o.bias_pct)})`}, and was
         too high in <strong className="warn">{pct((100 * tooHigh) / total, 0)}</strong> of hours. Taken at face value, it overstates the wind a buyer can count on.
       </p>
     </div>
@@ -87,7 +87,7 @@ function Stats({ a }: { a: AccuracyResponse }) {
   const o = a.overall
   return (
     <dl className="grid stats" style={{ margin: 0 }}>
-      <Stat label="Average miss (MAE)" value={mw(o.mae_mw)} hint={`${pct(o.mae_pct)} of average output`} />
+      <Stat label="Average miss (MAE)" value={mw(o.mae_mw)} hint={o.mae_pct === null ? undefined : `${pct(o.mae_pct)} of average output`} />
       <Stat label="Bias" value={signedMw(o.bias_mw)} hint={o.bias_mw >= 0 ? 'forecast above actual' : 'forecast below actual'} warn />
       <Stat label="Big misses (P90)" value={mw(o.p90_abs_error_mw)} hint="1 hour in 10 was off by more" />
       <Stat label="RMSE" value={mw(o.rmse_mw)} hint="penalises large misses more" />
@@ -147,11 +147,11 @@ const hourTooltip = makeTooltip((d) => {
   }
 })
 
-function ByHour({ rows }: { rows: GroupMetrics[] }) {
+function ByHour({ rows, days }: { rows: GroupMetrics[]; days: number }) {
   const data = rows.map((g) => ({ key: g.key, mae: g.mae_mw, bias: g.bias_mw, g }))
   const AXIS = axisFor(data.flatMap((r) => [r.mae, r.bias]), { zero: false })
   return (
-    <Panel title="Each hour of the day" sub="Whether the forecast is worse overnight than in the afternoon, averaged over all 31 days.">
+    <Panel title="Each hour of the day" sub={`Whether the forecast is worse overnight than in the afternoon, averaged over all ${days} delivery days.`}>
       <div className="chart short" role="img" aria-label="Forecast bias and average miss by hour of day">
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
@@ -282,14 +282,19 @@ function BiasCorrectionCard({ a }: { a: AccuracyResponse }) {
 function ReliabilityCard({ a }: { a: AccuracyResponse }) {
   const b = a.band
   return (
-    <Panel title="Can you trust the likely-range band?" sub={`The band on the forecast chart is the 10th to 90th percentile of January errors, so it should hold ${pct(b.level * 100, 0)} of outcomes.`}>
-      <dl className="grid stats" style={{ margin: 0 }}>
+    <Panel title="Can you trust the likely-range band?" sub={`The likely range is the 10th to 90th percentile of past errors, so it should hold ${pct(b.level * 100, 0)} of outcomes. Here is how often it did.`}>
+      <dl className="grid stats" style={{ margin: 0, gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' }}>
         <Stat label="Target" value={pct(b.level * 100, 0)} />
         <Stat label="January, in-sample" value={pct(b.in_sample_coverage * 100)} hint="true by construction" />
         <Stat label="Held out, day by day" value={pct(b.leave_one_day_out_coverage * 100)} hint="band rebuilt without the day it is judged on" />
+        <Stat
+          label="Walk-forward"
+          value={b.walk_forward_coverage === null ? '–' : pct(b.walk_forward_coverage * 100)}
+          hint={`built only from days finished before each decision, as on the buying page; ${b.walk_forward_days} days`}
+        />
       </dl>
       <p className="sub" style={{ margin: '12px 0 0' }}>
-        The held-out figure is the honest one. It lands a little under the target, so read the band as {gw(Math.abs(b.error_p90_mw - b.error_p10_mw))} wide at roughly {pct(b.leave_one_day_out_coverage * 100, 0)} confidence.
+        The last two are the honest figures, because the band never sees the day it is judged on. Over the whole month the band is {gw(Math.abs(b.error_p90_mw - b.error_p10_mw))} wide.
       </p>
     </Panel>
   )

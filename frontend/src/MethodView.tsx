@@ -36,6 +36,8 @@ export function MethodView({ meta }: { meta: Meta }) {
               each hour.
             </li>
             <li>Forecasts released after the hour they describe are dropped. They are hindcasts nobody could act on.</li>
+            <li>A decision taken on 1 January before that day's first release (02:30) uses the releases of 31 December, which the snapshot includes for that reason.</li>
+            <li>If no release had yet reached an hour by the cutoff (cutoffs before 02:30 miss 22:00 and 23:00), the page says so and its totals cover only the hours it has.</li>
             <li>Each forecast hour is scored against the mean of the two half-hours it covers.</li>
             <li>
               Decisions made in January 2026 are for delivery {dayLabel(c.delivery_from)} to {dayLabel(c.delivery_to)}, which is {count(31)} delivery days.
@@ -51,11 +53,12 @@ export function MethodView({ meta }: { meta: Meta }) {
               <strong>MAE</strong> is the average size of the miss. <strong>RMSE</strong> is similar but punishes big misses more. <strong>Bias</strong> is the average signed error.
             </li>
             <li>
-              <strong>The likely-range band</strong> applies the 10th–90th percentile of January errors to the forecast. It describes how January behaved, and is checked against held-out days on the
-              accuracy page.
+              <strong>The likely-range band</strong> applies the 10th–90th percentile of past errors to the forecast. On the buying page it uses only delivery days already finished at the
+              decision time, so it needs three of them and appears from 6 January. The accuracy page checks how often it held.
             </li>
             <li>
-              <strong>The naive guess</strong> repeats the same hour from the last day already complete at the cutoff. A forecast has to beat it to earn its keep.
+              <strong>The naive guess</strong> repeats the same hour of the day from the latest day on which that hour had already ended at the cutoff: the day before for hours earlier
+              than the cutoff, two days before for later ones. A forecast has to beat it to earn its keep.
             </li>
           </ul>
 
